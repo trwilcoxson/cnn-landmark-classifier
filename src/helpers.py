@@ -37,20 +37,18 @@ def setup_env():
     # Make checkpoints subdir if not existing
     os.makedirs("checkpoints", exist_ok=True)
     
-    # Make sure we can reach the installed binaries. This is needed for the workspace
-    if os.path.exists("/data/DLND/C2/landmark_images"):
+    # Ensure installed binaries are on PATH
+    if os.path.exists("/data/landmark_images"):
         os.environ['PATH'] = f"{os.environ['PATH']}:/root/.local/bin"
 
 
 def get_data_location():
     """
-    Find the location of the dataset, either locally or in the Udacity workspace
+    Find the location of the dataset
     """
 
     if os.path.exists("landmark_images"):
         data_folder = "landmark_images"
-    elif os.path.exists("/data/DLND/C2/landmark_images"):
-        data_folder = "/data/DLND/C2/landmark_images"
     else:
         raise IOError("Please download the dataset first")
 

@@ -1,69 +1,92 @@
-## Project Overview
+# Landmark Classifier
 
-Welcome to the Convolutional Neural Networks (CNN) project!
-In this project, you will learn how to build a pipeline to process real-world, user-supplied images and to put your model into an app.
-Given an image, your app will predict the most likely locations where the image was taken.
+A CNN-based image classification system that predicts the geographic location of a photo from 50 world landmarks. Includes a custom CNN trained from scratch and a ResNet18 transfer learning model, both exported as standalone TorchScript artifacts for deployment.
 
-By completing this lab, you demonstrate your understanding of the challenges involved in piecing together a series of models designed to perform various tasks in a data processing pipeline.
+## Overview
 
-Each model has its strengths and weaknesses, and engineering a real-world application often involves solving many problems without a perfect answer.
+Given a user-supplied photo, the system identifies which of 50 global landmarks (Haleakala National Park, Mount Rainier, Ljubljana Castle, Dead Sea, Temple of Olympian Zeus, etc.) appears in the image and returns the top-k predictions with confidence scores. Two model paths are compared: a 5-block CNN designed from scratch achieves 60% test accuracy, while a frozen ResNet18 backbone with a retrained classifier head reaches 72% with 100x fewer trainable parameters.
 
-### Why We're Here
+## Architecture
 
-Photo sharing and photo storage services like to have location data for each photo that is uploaded. With the location data, these services can build advanced features, such as automatic suggestion of relevant tags or automatic photo organization, which help provide a compelling user experience. Although a photo's location can often be obtained by looking at the photo's metadata, many photos uploaded to these services will not have location metadata available. This can happen when, for example, the camera capturing the picture does not have GPS or if a photo's metadata is scrubbed due to privacy concerns.
+### CNN from Scratch
 
-If no location metadata for an image is available, one way to infer the location is to detect and classify a discernable landmark in the image. Given the large number of landmarks across the world and the immense volume of images that are uploaded to photo sharing services, using human judgement to classify these landmarks would not be feasible.
+```
+Input: 3x224x224
 
-In this project, you will take the first steps towards addressing this problem by building a CNN-powered app to automatically predict the location of the image based on any landmarks depicted in the image. At the end of this project, your app will accept any user-supplied image as input and suggest the top k most relevant landmarks from 50 possible landmarks from across the world.
+Block 1: Conv2d(3→32, 3x3) → BatchNorm → ReLU → MaxPool    → 32@112x112
+Block 2: Conv2d(32→64, 3x3) → BatchNorm → ReLU → MaxPool   → 64@56x56
+Block 3: Conv2d(64→128, 3x3) → BatchNorm → ReLU → MaxPool  → 128@28x28
+Block 4: Conv2d(128→256, 3x3) → BatchNorm → ReLU → MaxPool → 256@14x14
+Block 5: Conv2d(256→512, 3x3) → BatchNorm → ReLU           → 512@14x14
 
+AdaptiveAvgPool2d(1,1) → Flatten → Dropout(0.7) → Linear(512→256) → ReLU → Dropout(0.7) → Linear(256→50)
+```
 
-## Project Instructions
+Progressive filter expansion from 32 to 512 channels. Global average pooling replaces a large fully-connected layer, reducing parameter count and overfitting risk. Heavy dropout (0.7) compensates for the small dataset (~4,000 training images across 50 classes).
 
-### Getting started
+### Transfer Learning
 
-#### Local Setup
+```
+ResNet18 (ImageNet pretrained, frozen) → Linear(512→50)
+```
 
-This setup requires a bit of familiarity with creating a working deep learning environment. An NVIDIA GPU is highly recommended.
+All convolutional layers are frozen — only the final 25K-parameter classifier is trained. The ImageNet backbone provides general-purpose feature extraction (edges, textures, shapes) that transfers well to landmark recognition.
 
-1. Open a terminal and clone the repository, then navigate to the downloaded folder:
+### Data Pipeline
 
-	```
-		git clone https://github.com/trwilcoxson/cnn-landmark-classifier.git
-		cd cnn-landmark-classifier
-	```
+Training transforms: `Resize(256) → RandomCrop(224) → RandomHorizontalFlip → RandomRotation(15) → ColorJitter(0.2) → Normalize`
 
-2. Create a new conda environment with python 3.7.6:
+Validation/test transforms: `Resize(256) → CenterCrop(224) → Normalize`
 
-    ```
-        conda create --name cnn_landmark -y python=3.7.6
-        conda activate cnn_landmark
-    ```
+Per-channel mean and std are computed from the training set and cached in `mean_and_std.pt`.
 
-    NOTE: you will have to execute `conda activate cnn_landmark` for every new terminal session.
+### Inference
 
-3. Install the requirements of the project:
+The `Predictor` class wraps a trained model with its transforms into a single `nn.Module`, then exports via `torch.jit.script()` to a standalone `.pt` file. The TorchScript artifact includes all preprocessing — no source code needed to run inference.
 
-    ```
-        pip install -r requirements.txt
-    ```
+## Results
 
-4. Install and open Jupyter lab:
+| Model | Test Accuracy | Test Loss | Trainable Params | Convergence |
+|---|---|---|---|---|
+| CNN from scratch | 60% (760/1250) | 1.564 | ~2.5M | Plateaus at epoch 30 |
+| ResNet18 transfer | 72% (911/1250) | 1.061 | ~25K | Plateaus at epoch 10 |
 
-	```
-        pip install jupyterlab
-		jupyter lab
-	```
+## Tech Stack
 
-### Developing your project
+| Component | Library |
+|---|---|
+| Framework | PyTorch 1.11, TorchVision 0.12 |
+| Training viz | livelossplot |
+| Export | TorchScript (`torch.jit.script`) |
+| App interface | ipywidgets (file upload + top-5 display) |
 
-Now that you have a working environment, execute the following steps:
+## Project Structure
 
->**Note:** Complete the following notebooks in order, do not move to the next step if you didn't complete the previous one.
+```
+cnn_landmark_classifier/
+├── src/
+│   ├── model.py          # MyModel: 5-block CNN architecture
+│   ├── transfer.py       # ResNet18 transfer learning setup
+│   ├── data.py           # Data loaders, augmentation, train/val split
+│   ├── train.py          # Training/validation loops, ReduceLROnPlateau
+│   ├── optimization.py   # Loss function, optimizer factory
+│   ├── predictor.py      # TorchScript-compatible inference wrapper
+│   └── helpers.py        # Dataset setup, normalization caching, plotting
+├── cnn_from_scratch.ipynb    # Train custom CNN + export
+├── transfer_learning.ipynb   # Train transfer model + export
+├── app.ipynb                 # Interactive landmark classifier app
+├── landmark_images/          # 50-class dataset (train + test)
+├── checkpoints/              # Saved model weights
+└── requirements.txt
+```
 
-1. Open the `cnn_from_scratch.ipynb` notebook and follow the instructions there
-2. Open `transfer_learning.ipynb` and follow the instructions
-3. Open `app.ipynb` and follow the instructions there
+## Setup
 
-## Dataset Info
+```bash
+conda create --name landmark_clf -y python=3.7.6
+conda activate landmark_clf
+pip install -r requirements.txt
+jupyter lab
+```
 
-The landmark images are a subset of the Google Landmarks Dataset v2.
+Run the three notebooks in order: `cnn_from_scratch.ipynb` → `transfer_learning.ipynb` → `app.ipynb`.
